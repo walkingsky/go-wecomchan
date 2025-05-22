@@ -13,6 +13,7 @@ import (
 	"os"
 	"reflect"
 	"time"
+	"strings"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -120,9 +121,13 @@ func RedisClient() *redis.Client {
 // PostMsg 推送消息
 func PostMsg(postData JsonData, postUrl string) string {
 	postJson, _ := json.Marshal(postData)
-	log.Println("postJson ", string(postJson))
+	jsonString := string(postJson)
+	// 替换 \\n 为 \n
+	jsonString = strings.Replace(jsonString, `\\n`, `\n`, -1)
+	
+	log.Println("postJson ", jsonString)
 	log.Println("postUrl ", postUrl)
-	msgReq, err := http.NewRequest("POST", postUrl, bytes.NewBuffer(postJson))
+	msgReq, err := http.NewRequest("POST", postUrl, bytes.NewBuffer([]byte(jsonString)))
 	if err != nil {
 		log.Println(err)
 	}
@@ -249,6 +254,10 @@ func main() {
 		}
 		msgContent := req.FormValue("msg")
 		msgType := req.FormValue("msg_type")
+		ToUser := req.FormValue("to_user")
+		if ToUser == "" {
+			ToUser = "@all"
+		}
 		log.Println("mes_type=", msgType)
 		// 默认mediaId为空
 		mediaId := ""
@@ -271,6 +280,7 @@ func main() {
 
 		// 准备发送应用消息所需参数
 		postData := InitJsonData(msgType)
+		postData.ToUser = ToUser
 		postData.Text = Msg{
 			Content: msgContent,
 		}
