@@ -105,16 +105,21 @@ docker run -dit -e SENDKEY=set_a_sendkey \
 
 ## 调用方式
 - v1_推送文本
-访问 `http://localhost:8080/wecomchan?sendkey=你配置的sendkey&msg=需要发送的消息&msg_type=text`
+访问 `http://localhost:8080/wecomchan?sendkey=你配置的sendkey&&msg=需要发送的消息&&msg_type=text`
+
 - v2_推送文本or图片
-- to_user 参数，非必要参数，为空时默认认为‘@all’ ，向所有人推送；to_user=userid1[|userid2...] 有值时向特定用户推送
 
 ```bash
 # 推送文本消息
-curl --location --request GET 'http://localhost:8080/wecomchan?sendkey={你的sendkey}&msg={你的文本消息}&msg_type=text&to_user=666'
+curl --location --request GET 'http://localhost:8080/wecomchan?sendkey={你的sendkey}&msg={你的文本消息}&msg_type=text'
 
 # 推送图片消息
 curl --location --request POST 'http://localhost:8080/wecomchan?sendkey={你的sendkey}&msg_type=image' \
 --form 'media=@"test.jpg"'
 ```
 
+## 后续预计添加
+
+* [x] Dockerfile 打包镜像(不依赖网络环境)
+* [x] 通过环境变量传递企业微信id，secret等，镜像一次构建多次使用
+* [x] docker-compose redis + go-wecomchan 一键部署
