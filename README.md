@@ -23,8 +23,8 @@ docker构建镜像使用，需要安装docker，不依赖golang以及网络。
 
 ```golang
 var Sendkey = GetEnvDefault("SENDKEY", "set_a_sendkey")
-var WecomCid = GetEnvDefault("WECOM_CID", "企业微信公司ID")
-var WecomSecret = GetEnvDefault("WECOM_SECRET", "企业微信应用Secret")
+var WecomAids = strings.Split(GetEnvDefault("WECOM_AIDS", "企业微信应用ID"), ",")
+var WecomSecrets = strings.Split(GetEnvDefault("WECOM_SECRETS", "企业微信应用Secret"), ",")
 var WecomAid = GetEnvDefault("WECOM_AID", "企业微信应用ID")
 var WecomToUid = GetEnvDefault("WECOM_TOUID", "@all")
 var RedisStat = GetEnvDefault("REDIS_STAT", "OFF")
@@ -71,8 +71,8 @@ Docker Hub 地址为:[https://hub.docker.com/r/fcbhank/go-wecomchan](https://hub
 ```bash
 docker run -dit -e SENDKEY=set_a_sendkey \
 -e WECOM_CID=企业微信公司ID \
--e WECOM_SECRET=企业微信应用Secret \
--e WECOM_AID=企业微信应用ID \
+-e WECOM_SECRETS=企业微信应用1Secret,应用2Secret,.... \
+-e WECOM_AIDS=企业微信应用1ID,应用1ID2,... \
 -e WECOM_TOUID="@all" \
 -e REDIS_STAT=ON \
 -e REDIS_ADDR="localhost:6379" \
@@ -90,8 +90,8 @@ docker run -dit -e SENDKEY=set_a_sendkey \
 |---|---|
 |SENDKEY|发送时用来验证的key|
 |WECOM_CID|企业微信公司ID|
-|WECOM_SECRET|企业微信应用Secret|
-|WECOM_AID|企业微信应用ID|
+|WECOM_SECRETS|企业微信应用Secret（多个应用的Secret用“,”分隔）|
+|WECOM_AIDS|企业微信应用ID多个应用的ID用“,”分隔）|
 |WECOM_TOUID|需要发送给的人，详见[企业微信官方文档](https://work.weixin.qq.com/api/doc/90000/90135/90236#%E6%96%87%E6%9C%AC%E6%B6%88%E6%81%AF)|
 |REDIS_STAT|是否启用redis换缓存token,ON-启用 OFF或空-不启用|
 |REDIS_ADDR|redis服务器地址，如不启用redis缓存可不设置|
@@ -105,16 +105,17 @@ docker run -dit -e SENDKEY=set_a_sendkey \
 
 ## 调用方式
 - v1_推送文本
-访问 `http://localhost:8080/wecomchan?sendkey=你配置的sendkey&&msg=需要发送的消息&&msg_type=text`
-
+  访问 `http://localhost:8080/wecomchan?sendkey=你配置的sendkey&&msg=需要发送的消息&&msg_type=text&to_user={推送的用户}&appID=企业微信应用的ID`
+  1. 如果appID为空或未提供，则服务器使用服务器配置的第一个企业微信应用进行推送
+  2. to_user={推送的用户}，多个用户之间用“|”分隔，如“to_usr=user1|user2”
 - v2_推送文本or图片
 
 ```bash
 # 推送文本消息
-curl --location --request GET 'http://localhost:8080/wecomchan?sendkey={你的sendkey}&msg={你的文本消息}&msg_type=text'
+curl --location --request GET 'http://localhost:8080/wecomchan?sendkey={你的sendkey}&msg={你的文本消息}&to_user={推送的用户}&msg_type=text&appID={企业微信应用的ID}'
 
 # 推送图片消息
-curl --location --request POST 'http://localhost:8080/wecomchan?sendkey={你的sendkey}&msg_type=image' \
+curl --location --request POST 'http://localhost:8080/wecomchan?sendkey={你的sendkey}&msg_type=image&to_user={推送的用户}&appID={企业微信应用的ID}' \
 --form 'media=@"test.jpg"'
 ```
 
