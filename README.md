@@ -91,7 +91,7 @@ docker run -dit -e SENDKEY=set_a_sendkey \
 |SENDKEY|发送时用来验证的key|
 |WECOM_CID|企业微信公司ID|
 |WECOM_SECRETS|企业微信应用Secret（多个应用的Secret用“,”分隔）|
-|WECOM_AIDS|企业微信应用ID多个应用的ID用“,”分隔）|
+|WECOM_AIDS|企业微信应用ID（多个应用的ID用“,”分隔）|
 |WECOM_TOUID|需要发送给的人，详见[企业微信官方文档](https://work.weixin.qq.com/api/doc/90000/90135/90236#%E6%96%87%E6%9C%AC%E6%B6%88%E6%81%AF)|
 |REDIS_STAT|是否启用redis换缓存token,ON-启用 OFF或空-不启用|
 |REDIS_ADDR|redis服务器地址，如不启用redis缓存可不设置|

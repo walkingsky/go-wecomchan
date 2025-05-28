@@ -5,10 +5,11 @@ import (
     "context"
     "encoding/json"
     "fmt"
-    "io/ioutil"
+    "io"
     "log"
     "math"
     "mime/multipart"
+	"net"
     "net/http"
     "os"
     "reflect"
@@ -87,7 +88,7 @@ func GetRemoteToken(corpId, appSecret, appID string) string {
         log.Println(err)
     }
     defer resp.Body.Close()
-    respData, err := ioutil.ReadAll(resp.Body)
+    respData, err := io.ReadAll(resp.Body)
     if err != nil {
         log.Println(err)
     }
@@ -119,29 +120,49 @@ func RedisClient() *redis.Client {
 }
 
 // PostMsg 推送消息
-func PostMsg(postData JsonData, postUrl string) string {
-    postJson, _ := json.Marshal(postData)
+func PostMsg(postData JsonData, postUrl string) (string, error) {
+    // 序列化请求数据为 JSON
+    postJson, err := json.Marshal(postData)
+    if err != nil {
+        return "", fmt.Errorf("failed to marshal JSON data: %w", err)
+    }
+    
+    // 处理特殊字符替换
     jsonString := string(postJson)
-    // 替换 \\n 为 \n
     jsonString = strings.Replace(jsonString, `\\n`, `\n`, -1)
-
-    log.Println("postJson ", jsonString)
-    log.Println("postUrl ", postUrl)
-    msgReq, err := http.NewRequest("POST", postUrl, bytes.NewBuffer([]byte(jsonString)))
+    log.Printf("postJson: %s", jsonString)
+    log.Printf("postUrl: %s", postUrl)
+    
+    // 创建 HTTP 请求
+    req, err := http.NewRequestWithContext(context.Background(), "POST", postUrl, bytes.NewBuffer([]byte(jsonString)))
     if err != nil {
-        log.Println(err)
+        return "", fmt.Errorf("failed to create HTTP request: %w", err)
     }
-    msgReq.Header.Set("Content-Type", "application/json")
-    client := &http.Client{}
-    resp, err := client.Do(msgReq)
+    req.Header.Set("Content-Type", "application/json")
+    
+    // 使用共享的 HTTP 客户端实例
+    resp, err := httpClient.Do(req)
     if err != nil {
-        log.Fatalln("企业微信发送应用消息接口报错==>", err)
+        return "", fmt.Errorf("failed to send HTTP request: %w", err)
     }
-    defer msgReq.Body.Close()
-    body, _ := ioutil.ReadAll(resp.Body)
+    defer resp.Body.Close()
+    
+    // 检查 HTTP 状态码
+    if resp.StatusCode != http.StatusOK {
+        return "", fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+    }
+    
+    // 读取响应内容
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return "", fmt.Errorf("failed to read response body: %w", err)
+    }
+    
+    // 解析响应数据并记录日志
     mediaResp := ParseJson(string(body))
-    log.Println("企业微信发送应用消息接口返回==>", mediaResp)
-    return string(body)
+    log.Printf("企业微信发送应用消息接口返回: %v", mediaResp)
+    
+    return string(body), nil
 }
 
 // UploadMedia  上传临时素材并返回mediaId
@@ -158,7 +179,7 @@ func UploadMedia(msgType string, req *http.Request, accessToken string) (string,
     buf := new(bytes.Buffer)
     writer := multipart.NewWriter(buf)
     if createFormFile, err := writer.CreateFormFile("media", imgHeader.Filename); err == nil {
-        readAll, _ := ioutil.ReadAll(imgFile)
+        readAll, _ := io.ReadAll(imgFile)
         createFormFile.Write(readAll)
     }
     writer.Close()
@@ -168,9 +189,8 @@ func UploadMedia(msgType string, req *http.Request, accessToken string) (string,
     newRequest, _ := http.NewRequest("POST", uploadMediaUrl, buf)
     newRequest.Header.Set("Content-Type", writer.FormDataContentType())
     log.Println("Content-Type ", writer.FormDataContentType())
-    client := &http.Client{}
-    resp, err := client.Do(newRequest)
-    respData, _ := ioutil.ReadAll(resp.Body)
+    resp, err := httpClient.Do(newRequest)
+    respData, _ := io.ReadAll(resp.Body)
     mediaResp := ParseJson(string(respData))
     log.Println("企业微信上传临时素材接口返回==>", mediaResp)
     if err != nil {
@@ -192,7 +212,6 @@ func ValidateToken(errcode interface{}, appID string) bool {
     }
 
     // 如果errcode为42001表明token已失效，则清空redis中的token缓存
-    // 已知codeType为float64
     if math.Abs(errcode.(float64)-float64(42001)) < 1e-3 {
         if RedisStat == "ON" {
             log.Printf("token已失效，开始删除redis中的key==>%s", RedisTokenKeyPrefix+appID)
@@ -215,8 +234,11 @@ func GetAccessToken(appID, appSecret string) string {
         value, err := rdb.Get(ctx, RedisTokenKeyPrefix+appID).Result()
         if err == redis.Nil {
             log.Println("access_token does not exist, need get it from remote API")
+        } else if err != nil {
+            log.Printf("Error getting access token from Redis: %v", err)
+        } else {
+            accessToken = value
         }
-        accessToken = value
     }
     if accessToken == "" {
         log.Println("get access_token from remote API")
@@ -237,11 +259,52 @@ func InitJsonData(msgType, appID string) JsonData {
     }
 }
 
+// 获取客户端真实IP地址
+func getClientIP(r *http.Request) string {
+    // 尝试从 X-Forwarded-For 头获取客户端IP
+    xffHeader := r.Header.Get("X-Forwarded-For")
+    if xffHeader != "" {
+        // X-Forwarded-For 格式: client, proxy1, proxy2, ...
+        ips := strings.Split(xffHeader, ",")
+        // 返回最左边的IP，即客户端IP
+        return strings.TrimSpace(ips[0])
+    }
+    
+    // 尝试从 X-Real-IP 头获取客户端IP
+    realIP := r.Header.Get("X-Real-IP")
+    if realIP != "" {
+        return realIP
+    }
+    
+    // 如果没有代理头，则使用远程地址
+    // 格式: "IP:端口"，所以需要分割
+    remoteAddr := r.RemoteAddr
+    if ip, _, err := net.SplitHostPort(remoteAddr); err == nil {
+        return ip
+    }
+    
+    return remoteAddr
+}
+
+// 共享的 HTTP 客户端实例，避免重复创建
+var httpClient = &http.Client{
+    Timeout: 30 * time.Second, // 设置请求超时时间
+    Transport: &http.Transport{
+        MaxIdleConns:        100,
+        MaxIdleConnsPerHost: 10,
+        IdleConnTimeout:     90 * time.Second,
+    },
+}
+
 // 主函数入口
 func main() {
     // 设置日志内容显示文件名和行号
     log.SetFlags(log.LstdFlags | log.Lshortfile)
     wecomChan := func(res http.ResponseWriter, req *http.Request) {
+        // 获取并打印客户端真实IP
+        clientIP := getClientIP(req)
+        log.Printf("Client IP: %s", clientIP)
+        
         _ = req.ParseForm()
         sendkey := req.FormValue("sendkey")
         if sendkey != Sendkey {
@@ -265,7 +328,7 @@ func main() {
                     break
                 }
             }
-            if!found {
+            if !found {
                 log.Panicln("未找到对应的企业微信应用ID，请检查")
             }
         }
@@ -312,23 +375,35 @@ func main() {
         }
 
         postStatus := ""
+        var err error
         for i := 0; i <= 3; i++ {
             sendMessageUrl := fmt.Sprintf(SendMessageApi, accessToken)
-            postStatus = PostMsg(postData, sendMessageUrl)
-            postResponse := ParseJson(postStatus)
-            errcode := postResponse["errcode"]
-            log.Println("发送应用消息接口返回errcode==>", errcode)
-            tokenValid = ValidateToken(errcode, appID)
+            postStatus, err = PostMsg(postData, sendMessageUrl)
+            if err != nil {
+                log.Printf("Error sending message: %v", err)
+                postStatus = fmt.Sprintf(`{"errcode":500,"errmsg":"%s"}`, err.Error())
+                tokenValid = false
+            } else {
+                postResponse := ParseJson(postStatus)
+                errcode := postResponse["errcode"]
+                log.Println("发送应用消息接口返回errcode==>", errcode)
+                tokenValid = ValidateToken(errcode, appID)
+            }
+            
             // token有效则跳出循环继续执行，否则重试3次
             if tokenValid {
                 break
             }
+            
             // 刷新token
             accessToken = GetAccessToken(appID, appSecret)
         }
 
         res.Header().Set("Content-type", "application/json")
-        _, _ = res.Write([]byte(postStatus))
+        _, err = res.Write([]byte(postStatus))
+        if err != nil {
+            log.Printf("Error writing response: %v", err)
+        }
     }
     http.HandleFunc("/wecomchan", wecomChan)
     log.Fatal(http.ListenAndServe(":8080", nil))
